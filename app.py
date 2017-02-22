@@ -3,10 +3,12 @@
 from __future__ import print_function
 
 import logging
+import os
 from _decimal import Decimal
 
 import requests
 from future.standard_library import install_aliases
+from wikipedia import wikipedia
 
 install_aliases()
 
@@ -14,7 +16,6 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 import json
-import os
 
 from flask import Flask
 from flask import request
@@ -45,7 +46,7 @@ def webhook():
 def process_request(req):
     action = req.get("result").get("action")
 
-    if req.get("result").get("action") != "yahooWeatherForecast":
+    if action != "yahooWeatherForecast":
         if action == u"weather.search":
             try:
                 parameters = req.get("result").get("parameters")
@@ -57,6 +58,42 @@ def process_request(req):
             except Exception as e:
                 return {}
                 # Do something else
+        if u"wisdom" in action:
+            parameters = req.get("result").get("parameters")
+            query_wisdom = parameters.get('q')
+            request_type = parameters.get('request_type')
+
+            try:
+                wikipedia_answer_url = None
+                wisdom_answer = None
+                speech = None
+                if query_wisdom:
+                    wikipedia_search = wikipedia.search(query_wisdom, results=2)[0]
+                    wikipedia_answer_url = wikipedia.page(wikipedia_search).url
+                    if wikipedia_answer_url:
+                        wisdom_answer = wikipedia.summary(query_wisdom, sentences=1)
+                    else:
+                        wikipedia_search = wikipedia.search(query_wisdom, results=2)[1]
+                        wikipedia_answer_url = wikipedia.page(wikipedia_search).url
+
+                    if wisdom_answer and wikipedia_answer_url:
+                        speech = "According to Wikipedia.org (" + wikipedia_answer_url + "): " + wisdom_answer
+                    else:
+                        speech = "I am sorry, but I couldn't find a good article or result for your " \
+                                 "request on Wikipedia.org " \
+                                 "Why don't you click on the following link to see similar results: "
+                        "https://en.wikipedia.org/w/index.php?search=" + wisdom_answer.replace(" ", "+")
+
+                    return {
+                        "speech": speech,
+                        "displayText": speech,
+                        # "data": data,
+                        # "contextOut": [],
+                        "source": "apiai-weather-webhook-sample"
+                    }
+            except Exception as e:
+                logger.error("Error")
+
         return {}
 
     baseurl = "https://query.yahooapis.com/v1/public/yql?"
@@ -303,25 +340,17 @@ def _get_weather(bot, event, params):
     return {}
 
 
-def weather_request_hangouts(bot, event, *args):
+def weather_request_hangouts(*args):
     """Returns weather information from Forecast.io
     <b>/bot weather <location></b> Get location's current weather.
     <b>/bot weather</b> Get the hangouts default location's current weather. If the default location is not set talk to a hangout admin.
     """
-    weather = _get_weather(bot, event, args)
+    weather = _get_weather(args)
     if weather:
-        yield from bot.coro_send_message(event,
-                                         _format_current_weather(weather))
+        return _format_current_weather(weather)
     else:
-        if bot.get_config_option('language') in 'pt_BR':
-            yield from bot.coro_send_message(event.conv_id,
-                                             'Puxa... '
-                                             'Não consegui adquirir a previsão do tempo atual para este lugar.\n'
-                                             'Acho que você vai precisar dar uma olhada lá fora.')
-        else:
-            yield from bot.coro_send_message(event.conv_id,
-                                             'There was an error retrieving the weather, '
-                                             'guess you need to look outside.')
+        return 'Puxa... Não consegui adquirir a previsão do tempo atual para este lugar. ' \
+               'Acho que você vai precisar dar uma olhada lá fora.'
 
 
 if __name__ == '__main__':
